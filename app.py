@@ -17226,7 +17226,7 @@ def ncaab_espn_mark_sync_attempt():
         pass
 
 
-def render_ncaab_espn_shooting(season):
+def render_ncaab_espn_shooting(season, selected_chart="3PA Rate vs 3P%"):
     st.subheader("ESPN • automatically collected shooting statistics")
     st.caption("Pulls completed-game boxscores, not TeamRankings pages. Independent exploratory charts only; does not change OG or ATS.")
     a, b, c = st.columns([1, 1, 2])
@@ -17275,22 +17275,24 @@ def render_ncaab_espn_shooting(season):
         st.info("Not enough teams meet the minimum number of games yet.")
         return
     selected = st.multiselect("Highlight teams • ESPN", sorted(shown["Team"].tolist()), key="ncaab_espn_shoot_highlight")
-    tabs = st.tabs(["3PA Rate vs 3P%", "3P Differential", "Points in the Paint"])
-    with tabs[0]:
+    if selected_chart == "3PA Rate vs 3P%":
         render_ncaab_style_scatter(shown, "3PA Rate", "3P %", "3PA Rate vs Shooting Accuracy (ESPN)", "3PA / FGA", "3PM / 3PA", selected, season, True, True)
-    with tabs[1]:
+    elif selected_chart == "3P Differential":
         render_ncaab_style_scatter(shown, "3P Made Differential / Game", "Points from 3P %", "3P Made Differential vs Scoring Share (ESPN)", "3PM − Opp 3PM / game", "% points from threes", selected, season, False, True)
-    with tabs[2]:
+    elif selected_chart == "Points in the Paint":
+        verified_paint_games = boxes.loc[boxes["PaintPoints"].notna(), "GameID"].nunique()
+        total_games = boxes["GameID"].nunique()
+        st.caption(f"Verified ESPN paint coverage: {verified_paint_games} of {total_games} cached games have at least one paint value. Missing values are never inferred.")
         if shown["Paint / 100 Poss"].notna().sum() < 2:
-            st.info("ESPN's standard college boxscore did not provide verified points-in-paint values for enough teams. No inferred paint values are shown.")
+            st.info("ESPN has not supplied complete verified points-in-paint values for enough teams. Use the CSV source below if available.")
         else:
             render_ncaab_style_scatter(shown, "Paint / 100 Poss", "Paint Points %", "Paint Scoring (ESPN)", "Paint points / 100 estimated possessions", "Paint scoring share", selected, season, False, True)
     with st.expander("Raw ESPN aggregates and source coverage"):
         st.dataframe(shown, hide_index=True, use_container_width=True)
 
 
-def render_ncaab_shooting_paint_charts(season: int) -> None:
-    render_ncaab_espn_shooting(season)
+def render_ncaab_shooting_paint_charts(season: int, selected_chart="3PA Rate vs 3P%") -> None:
+    render_ncaab_espn_shooting(season, selected_chart)
     render_ncaab_teamrankings_import(season)
     # The legacy season-total CSV remains available below for historical imports.
     st.subheader("Shooting & Paint Profiles • season totals (CSV fallback)")
@@ -17324,17 +17326,16 @@ def render_ncaab_shooting_paint_charts(season: int) -> None:
     st.caption(f"Loaded {len(style)} teams for season {season}. Data file: {NCAAB_STYLE_STATS_PATH.name}. Upload a fresh snapshot when the season advances.")
     highlights = st.multiselect("Highlight teams in all three charts", sorted(style["Team"].unique().tolist()),
                                 key="ncaab_style_highlight")
-    first, second, third = st.tabs(["3PA Rate vs 3P%", "3P Differential", "Points in the Paint"])
-    with first:
+    if selected_chart == "3PA Rate vs 3P%":
         render_ncaab_style_scatter(style, "3PA Rate", "3P %",
             "Three Point Attempt Rate vs 3-Point Percentage", "3-point attempt rate", "3-point percentage", highlights, season, True, True)
         st.caption("3PA rate = 3PA / FGA; 3P% = 3PM / 3PA. Higher reliance does not automatically imply high game-to-game volatility.")
-    with second:
+    elif selected_chart == "3P Differential":
         render_ncaab_style_scatter(style, "3P Made Differential", "Points from 3P %",
             "3P Made Differential vs % of Total Points from 3-Pointers", "3PM − opponent 3PM (season total)",
             "Share of total points from threes", highlights, season, False, True)
         st.caption("3P differential is the cumulative makes differential, not a per-game statistic. Teams with different game counts are not directly comparable without normalization.")
-    with third:
+    elif selected_chart == "Points in the Paint":
         render_ncaab_style_scatter(style, "Paint / 100 Poss", "Paint Points %",
             "Points in the Paint / 100 Possessions vs Paint Scoring Share", "Paint points per 100 possessions",
             "Share of total points in the paint", highlights, season, False, True)
@@ -17403,17 +17404,31 @@ def render_ncaab_workspace(date_value) -> None:
                     st.success(f"Saved {len(ratings_input)} teams to {NCAAB_RATINGS_PATH.name}.")
             except (ValueError, pd.errors.ParserError) as exc:
                 st.error(f"Unable to parse CSV: {exc}")
+    st.subheader("Analysis charts")
+    chart_choice = st.selectbox("Choose graph", [
+        "None – hide graphs",
+        "Pace vs Net Rating",
+        "Consistency vs Volatility",
+        "3PA Rate vs 3P%",
+        "3P Differential",
+        "Points in the Paint",
+    ], key="ncaab_chart_choice")
+    st.caption("Only the selected graph is expanded. Shooting and paint data imports are available within their selected graph.")
     ratings = load_ncaab_adjusted_ratings(season)
     if ratings.empty:
         st.warning(f"No verified adjusted ratings for season {season}. Schedule data still works; ratings cannot be compared until a valid source is available.")
-        render_ncaab_shooting_paint_charts(season)
+        if chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
+            render_ncaab_shooting_paint_charts(season, chart_choice)
     else:
         source_name = str(ratings["Source"].iloc[0]) if "Source" in ratings else "Unknown source"
         as_of = str(ratings["AsOf"].iloc[0]) if "AsOf" in ratings else "Unknown snapshot date"
         st.success(f"Loaded {len(ratings)} adjusted team ratings • {source_name} • snapshot {as_of}")
-        render_ncaab_pace_net_chart(ratings, season)
-        render_ncaab_volatility_chart(ratings, season, date_value)
-        render_ncaab_shooting_paint_charts(season)
+        if chart_choice == "Pace vs Net Rating":
+            render_ncaab_pace_net_chart(ratings, season)
+        elif chart_choice == "Consistency vs Volatility":
+            render_ncaab_volatility_chart(ratings, season, date_value)
+        elif chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
+            render_ncaab_shooting_paint_charts(season, chart_choice)
         with st.expander("Full adjusted ratings table", expanded=False):
             st.dataframe(ratings, use_container_width=True, hide_index=True)
         if not matches.empty:
