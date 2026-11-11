@@ -16466,6 +16466,75 @@ def render_ncaab_projections(matches: pd.DataFrame, ratings: pd.DataFrame, seaso
             st.success("Final results updated for games loaded on the selected scoreboard date.")
 
 
+
+def ncaab_category_regions(fig, data, x_key, y_key, mode):
+    """Descriptive chart zones, derived solely from the displayed sample."""
+    x = pd.to_numeric(data[x_key], errors="coerce").dropna()
+    y = pd.to_numeric(data[y_key], errors="coerce").dropna()
+    if len(x) < 2 or len(y) < 2:
+        return ""
+    def bounds(values):
+        lo, hi = float(values.min()), float(values.max())
+        pad = max((hi - lo) * .08, .02)
+        return lo - pad, hi + pad
+    x0, x1 = bounds(x)
+    y0, y1 = bounds(y)
+    if mode == "net":
+        cuts = [float(y.quantile(q)) for q in (.2, .4, .6, .8)]
+        edges = [y0] + cuts + [y1]
+        names = ["Below Average", "Developing", "Average", "Great", "Elite"]
+        colors = ["rgba(239,68,68,.085)", "rgba(249,115,22,.07)",
+                  "rgba(148,163,184,.06)", "rgba(34,197,94,.065)", "rgba(45,212,191,.10)"]
+        for i, name in enumerate(names):
+            if edges[i+1] <= edges[i]:
+                continue
+            fig.add_hrect(y0=edges[i], y1=edges[i+1], fillcolor=colors[i], line_width=0, layer="below")
+            fig.add_annotation(x=.99, y=(edges[i]+edges[i+1])/2, xref="paper", yref="y",
+                               text=name, showarrow=False, xanchor="right",
+                               font=dict(color="#cbd5e1", size=11),
+                               bgcolor="rgba(7,13,24,.58)")
+        return "Net-rating categories are sample quintiles (20% each), not fixed NCAA benchmarks."
+    xmid, ymid = float(x.median()), float(y.median())
+    # Quadrants are descriptive; dependence and volatility are not quality scores.
+    if mode == "volatility":
+        cells = [
+            (x0,xmid,y0,ymid,"Consistent / Lower Rated","rgba(148,163,184,.075)"),
+            (xmid,x1,y0,ymid,"Consistently Strong","rgba(34,197,94,.09)"),
+            (x0,xmid,ymid,y1,"Volatile / Lower Rated","rgba(249,115,22,.09)"),
+            (xmid,x1,ymid,y1,"Strong but Volatile","rgba(239,68,68,.08)"),
+        ]
+    elif mode == "shooting":
+        cells = [
+            (x0,xmid,y0,ymid,"Low Volume / Low Accuracy","rgba(239,68,68,.08)"),
+            (xmid,x1,y0,ymid,"High Volume / Low Accuracy","rgba(249,115,22,.10)"),
+            (x0,xmid,ymid,y1,"Selective & Accurate","rgba(34,197,94,.08)"),
+            (xmid,x1,ymid,y1,"High Volume & Accurate","rgba(45,212,191,.09)"),
+        ]
+    elif mode == "threes":
+        cells = [
+            (x0,xmid,y0,ymid,"Low 3P Share / Negative Edge","rgba(148,163,184,.07)"),
+            (xmid,x1,y0,ymid,"Low 3P Share / Positive Edge","rgba(34,197,94,.08)"),
+            (x0,xmid,ymid,y1,"High 3P Share / Negative Edge","rgba(239,68,68,.09)"),
+            (xmid,x1,ymid,y1,"High 3P Share / Positive Edge","rgba(45,212,191,.08)"),
+        ]
+    elif mode == "paint":
+        cells = [
+            (x0,xmid,y0,ymid,"Low Paint Production","rgba(239,68,68,.075)"),
+            (xmid,x1,y0,ymid,"Productive / Mixed Scoring","rgba(34,197,94,.08)"),
+            (x0,xmid,ymid,y1,"Paint Reliant / Low Output","rgba(249,115,22,.09)"),
+            (xmid,x1,ymid,y1,"Paint-Focused & Productive","rgba(45,212,191,.09)"),
+        ]
+    else:
+        return ""
+    for xa, xb, ya, yb, label, color in cells:
+        fig.add_shape(type="rect", x0=xa, x1=xb, y0=ya, y1=yb,
+                      xref="x", yref="y", fillcolor=color, line_width=0, layer="below")
+        fig.add_annotation(x=(xa+xb)/2, y=(ya+yb)/2, xref="x", yref="y",
+                           text=label, showarrow=False, font=dict(size=10,color="#cbd5e1"),
+                           bgcolor="rgba(7,13,24,.66)")
+    return "Areas are defined by the displayed sample medians, not fixed NCAA-wide ratings or betting recommendations."
+
+
 def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
     """Interactive team-level adjusted tempo vs adjusted net rating."""
     st.subheader("Pace vs Net Rating • opponent-adjusted")
@@ -16487,7 +16556,7 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
     with c2:
         label_mode = st.selectbox("Team labels", ["Highlighted only", "Top net rating", "All teams", "None"], key="ncaab_pace_labels")
     with c3:
-        elite_zone = st.checkbox("Show elite rating zone", value=True, key="ncaab_pace_elite")
+        elite_zone = st.checkbox("Show category regions", value=True, key="ncaab_pace_elite")
 
     pace_mid = float(chart_data["AdjT"].median())
     net_mid = float(chart_data["Net Rating"].median())
@@ -16500,14 +16569,9 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
 
     fig = go.Figure()
     if elite_zone:
-        # Clearly declared statistical threshold; not an attempt to reproduce
-        # a proprietary classification from the reference screenshot.
-        elite_cutoff = float(chart_data["Net Rating"].quantile(0.75))
-        fig.add_hrect(y0=elite_cutoff, y1=y_high, fillcolor="rgba(239,68,68,0.075)",
-                      line_width=0, layer="below")
-        fig.add_hline(y=elite_cutoff, line_color="rgba(248,113,113,0.65)",
-                      line_dash="dash", line_width=1,
-                      annotation_text="Top 25% net rating", annotation_position="top left")
+        zone_note = ncaab_category_regions(fig, chart_data, "AdjT", "Net Rating", "net")
+    else:
+        zone_note = "Category shading hidden."
 
     fig.add_vline(x=pace_mid, line_color="rgba(148,163,184,0.6)", line_width=1)
     fig.add_hline(y=net_mid, line_color="rgba(148,163,184,0.6)", line_width=1)
@@ -16549,7 +16613,7 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
         paper_bgcolor="#070d18", plot_bgcolor="#0b1220",
     )
     st.plotly_chart(fig, use_container_width=True, key="ncaab_pace_net_chart")
-    st.caption(f"Reference lines show the current snapshot medians: AdjT {pace_mid:.1f}, net rating {net_mid:+.1f}. The elite region, if shown, means top quartile of net rating only — not a betting recommendation.")
+    st.caption(f"Reference lines: AdjT median {pace_mid:.1f}, net median {net_mid:+.1f}. {zone_note}")
 
 
 
@@ -16719,6 +16783,7 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
     cutoff_strength = float(enough["Adj Net"].quantile(0.75))
     cutoff_vol = float(enough["Volatility"].median())
     fig = go.Figure()
+    zone_note = ncaab_category_regions(fig, enough, "Adj Net", "Volatility", "volatility")
     def plot_points(df, highlighted):
         if df.empty:
             return
@@ -16741,18 +16806,6 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
     plot_points(enough[enough["Team"].isin(selected)], True)
     fig.add_vline(x=cutoff_strength, line_dash="dash", line_color="rgba(148,163,184,0.6)")
     fig.add_hline(y=cutoff_vol, line_dash="dash", line_color="rgba(148,163,184,0.6)")
-    # Profile labels describe the relative position in this specific sample.
-    # Neither these thresholds nor our residual-SD measure are EvanMiya ratings.
-    for x, y, label in (
-        (0.03, 0.98, "Volatile / lower rating"),
-        (0.97, 0.98, "Dangerous but volatile"),
-        (0.03, 0.05, "Lower rating / consistent"),
-        (0.97, 0.05, "Consistently excellent"),
-    ):
-        fig.add_annotation(x=x, y=y, xref="paper", yref="paper", text=label,
-                           showarrow=False, xanchor="left" if x < 0.5 else "right",
-                           font=dict(size=11, color="#94a3b8"),
-                           bgcolor="rgba(15,23,42,0.65)")
     fig.update_layout(
         template="plotly_dark", height=630, margin=dict(l=20, r=20, t=45, b=25),
         title=dict(text=f"{season-1}–{str(season)[-2:]} • {start:%b %d} to {cutoff:%b %d} • {len(enough)} teams", font=dict(size=16)),
@@ -16761,7 +16814,7 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
         paper_bgcolor="#070d18", plot_bgcolor="#0b1220",
     )
     st.plotly_chart(fig, use_container_width=True, key="ncaab_volatility_chart")
-    st.caption(f"Guides: top quartile Adj Net = {cutoff_strength:+.1f}; median residual SD = {cutoff_vol:.1f}. These are data-driven guides, NOT EvanMiya thresholds or verified betting signals.")
+    st.caption(f"Guides: Adj Net and volatility medians define the four quadrants. {zone_note} This is not EvanMiya\u2019s proprietary score.")
     with st.expander("Method, limitations & team-by-team game deviations", expanded=False):
         st.markdown(
             "**Method:** For each completed game, observed margin × 100 / average current AdjT "
@@ -16846,6 +16899,10 @@ def render_ncaab_style_scatter(
         return
     fig = go.Figure()
     mid_x, mid_y = float(subset[x_key].median()), float(subset[y_key].median())
+    mode = ("shooting" if x_key == "3PA Rate" else
+            "threes" if "3P Made Differential" in x_key else
+            "paint" if "Paint" in x_key else "")
+    zone_note = ncaab_category_regions(fig, subset, x_key, y_key, mode)
     fig.add_vline(x=mid_x, line=dict(color="rgba(148,163,184,0.55)", dash="dash", width=1))
     fig.add_hline(y=mid_y, line=dict(color="rgba(148,163,184,0.55)", dash="dash", width=1))
     for selected, group_label, color, size in [
@@ -16876,7 +16933,7 @@ def render_ncaab_style_scatter(
         legend=dict(orientation="h", y=1.06, x=0),
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"Dashed lines indicate medians for the {len(subset)} imported teams, not NCAA-wide benchmarks.")
+    st.caption(f"Dashed lines indicate medians for the {len(subset)} displayed teams. {zone_note}")
 
 
 # TeamRankings publishes per-game shooting stats on team-stat pages. Its terms
@@ -17199,7 +17256,34 @@ def ncaab_espn_shooting_summary(boxes, season):
     return clean_ncaab_tr_per_game(pd.DataFrame(rows), season).assign(Source="ESPN completed-game boxscores (automatic)")
 
 
-def render_ncaab_espn_shooting(season):
+NCAAB_ESPN_SYNC_MARKER = APP_DIR / "data" / "ncaab_espn_last_sync.txt"
+NCAAB_ESPN_AUTO_SYNC_HOURS = 6
+
+
+def ncaab_espn_auto_sync_due(season):
+    """Only auto-fetch current-season data periodically, not on every Streamlit rerun."""
+    now = pd.Timestamp.now(tz="Europe/Stockholm")
+    if season != ncaab_season_for_date(now.date()):
+        return False
+    try:
+        timestamp = pd.Timestamp(NCAAB_ESPN_SYNC_MARKER.read_text(encoding="utf-8").strip())
+        if timestamp.tzinfo is None:
+            return True
+        return (now - timestamp).total_seconds() >= NCAAB_ESPN_AUTO_SYNC_HOURS * 3600
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def ncaab_espn_mark_sync_attempt():
+    """Throttle automatic attempts even when ESPN has no completed games yet."""
+    try:
+        NCAAB_ESPN_SYNC_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        NCAAB_ESPN_SYNC_MARKER.write_text(pd.Timestamp.now(tz="Europe/Stockholm").isoformat(), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def render_ncaab_espn_shooting(season, selected_chart="3PA Rate vs 3P%"):
     st.subheader("ESPN • automatically collected shooting statistics")
     st.caption("Pulls completed-game boxscores, not TeamRankings pages. Independent exploratory charts only; does not change OG or ATS.")
     a, b, c = st.columns([1, 1, 2])
@@ -17207,11 +17291,16 @@ def render_ncaab_espn_shooting(season):
         days = st.selectbox("History window (days)", [7, 14, 30], index=0, key="ncaab_espn_shooting_days")
     with b:
         fetch = st.button("↻ Sync ESPN games", key="ncaab_espn_shooting_sync")
+        auto_enabled = st.checkbox("Auto-sync every 6 hours", value=True, key="ncaab_espn_auto_sync")
     with c:
-        st.caption("Saved results remain available between app launches. First sync may take longer; each run is limited to 250 new games.")
-    if fetch:
+        st.caption("ESPN boxscores are cached locally. Auto-sync checks the latest 14 days and only runs when due; manual sync uses the selected history window.")
+    auto_fetch = auto_enabled and ncaab_espn_auto_sync_due(season)
+    if fetch or auto_fetch:
+        if auto_fetch:
+            ncaab_espn_mark_sync_attempt()
+        sync_days = days if fetch else 14
         cutoff = min(pd.Timestamp.now(tz="Europe/Stockholm").tz_localize(None).normalize(), pd.Timestamp(st.session_state.get("ncaab_selected_date", pd.Timestamp.today())).normalize())
-        start = max(pd.Timestamp(season - 1, 11, 1), cutoff - pd.Timedelta(days=days - 1))
+        start = max(pd.Timestamp(season - 1, 11, 1), cutoff - pd.Timedelta(days=sync_days - 1))
         try:
             with st.spinner("Fetching completed games and ESPN box scores..."):
                 games = fetch_ncaab_completed_games(str(start.date()), str(cutoff.date()))
@@ -17220,11 +17309,13 @@ def render_ncaab_espn_shooting(season):
                 else:
                     added, skipped, errors = update_ncaab_espn_boxes(season, games)
                     st.success(f"Stored {added} new games. {errors} missing/failed boxscores. {skipped} beyond sync limit.")
+                    if fetch:
+                        ncaab_espn_mark_sync_attempt()
         except (requests.RequestException, ValueError, KeyError, OSError) as exc:
             st.error(f"ESPN sync failed: {exc}")
     boxes = load_ncaab_espn_boxes(season)
     if boxes.empty:
-        st.info("No cached ESPN games yet. Click 'Sync ESPN games' to load verified completed games.")
+        st.info("No cached ESPN games yet. Automatic sync checks periodically, or click 'Sync ESPN games' to retry.")
         return
     # Filter to complete two-team game pairs; the dataframe is historical
     # and never presented as a full-season rating when collection is partial.
@@ -17241,22 +17332,24 @@ def render_ncaab_espn_shooting(season):
         st.info("Not enough teams meet the minimum number of games yet.")
         return
     selected = st.multiselect("Highlight teams • ESPN", sorted(shown["Team"].tolist()), key="ncaab_espn_shoot_highlight")
-    tabs = st.tabs(["3PA Rate vs 3P%", "3P Differential", "Points in the Paint"])
-    with tabs[0]:
+    if selected_chart == "3PA Rate vs 3P%":
         render_ncaab_style_scatter(shown, "3PA Rate", "3P %", "3PA Rate vs Shooting Accuracy (ESPN)", "3PA / FGA", "3PM / 3PA", selected, season, True, True)
-    with tabs[1]:
+    elif selected_chart == "3P Differential":
         render_ncaab_style_scatter(shown, "3P Made Differential / Game", "Points from 3P %", "3P Made Differential vs Scoring Share (ESPN)", "3PM − Opp 3PM / game", "% points from threes", selected, season, False, True)
-    with tabs[2]:
+    elif selected_chart == "Points in the Paint":
+        verified_paint_games = boxes.loc[boxes["PaintPoints"].notna(), "GameID"].nunique()
+        total_games = boxes["GameID"].nunique()
+        st.caption(f"Verified ESPN paint coverage: {verified_paint_games} of {total_games} cached games have at least one paint value. Missing values are never inferred.")
         if shown["Paint / 100 Poss"].notna().sum() < 2:
-            st.info("ESPN's standard college boxscore did not provide verified points-in-paint values for enough teams. No inferred paint values are shown.")
+            st.info("ESPN has not supplied complete verified points-in-paint values for enough teams. Use the CSV source below if available.")
         else:
             render_ncaab_style_scatter(shown, "Paint / 100 Poss", "Paint Points %", "Paint Scoring (ESPN)", "Paint points / 100 estimated possessions", "Paint scoring share", selected, season, False, True)
     with st.expander("Raw ESPN aggregates and source coverage"):
         st.dataframe(shown, hide_index=True, use_container_width=True)
 
 
-def render_ncaab_shooting_paint_charts(season: int) -> None:
-    render_ncaab_espn_shooting(season)
+def render_ncaab_shooting_paint_charts(season: int, selected_chart="3PA Rate vs 3P%") -> None:
+    render_ncaab_espn_shooting(season, selected_chart)
     render_ncaab_teamrankings_import(season)
     # The legacy season-total CSV remains available below for historical imports.
     st.subheader("Shooting & Paint Profiles • season totals (CSV fallback)")
@@ -17290,17 +17383,16 @@ def render_ncaab_shooting_paint_charts(season: int) -> None:
     st.caption(f"Loaded {len(style)} teams for season {season}. Data file: {NCAAB_STYLE_STATS_PATH.name}. Upload a fresh snapshot when the season advances.")
     highlights = st.multiselect("Highlight teams in all three charts", sorted(style["Team"].unique().tolist()),
                                 key="ncaab_style_highlight")
-    first, second, third = st.tabs(["3PA Rate vs 3P%", "3P Differential", "Points in the Paint"])
-    with first:
+    if selected_chart == "3PA Rate vs 3P%":
         render_ncaab_style_scatter(style, "3PA Rate", "3P %",
             "Three Point Attempt Rate vs 3-Point Percentage", "3-point attempt rate", "3-point percentage", highlights, season, True, True)
         st.caption("3PA rate = 3PA / FGA; 3P% = 3PM / 3PA. Higher reliance does not automatically imply high game-to-game volatility.")
-    with second:
+    elif selected_chart == "3P Differential":
         render_ncaab_style_scatter(style, "3P Made Differential", "Points from 3P %",
             "3P Made Differential vs % of Total Points from 3-Pointers", "3PM − opponent 3PM (season total)",
             "Share of total points from threes", highlights, season, False, True)
         st.caption("3P differential is the cumulative makes differential, not a per-game statistic. Teams with different game counts are not directly comparable without normalization.")
-    with third:
+    elif selected_chart == "Points in the Paint":
         render_ncaab_style_scatter(style, "Paint / 100 Poss", "Paint Points %",
             "Points in the Paint / 100 Possessions vs Paint Scoring Share", "Paint points per 100 possessions",
             "Share of total points in the paint", highlights, season, False, True)
@@ -17369,17 +17461,31 @@ def render_ncaab_workspace(date_value) -> None:
                     st.success(f"Saved {len(ratings_input)} teams to {NCAAB_RATINGS_PATH.name}.")
             except (ValueError, pd.errors.ParserError) as exc:
                 st.error(f"Unable to parse CSV: {exc}")
+    st.subheader("Analysis charts")
+    chart_choice = st.selectbox("Choose graph", [
+        "None – hide graphs",
+        "Pace vs Net Rating",
+        "Consistency vs Volatility",
+        "3PA Rate vs 3P%",
+        "3P Differential",
+        "Points in the Paint",
+    ], key="ncaab_chart_choice")
+    st.caption("Only the selected graph is expanded. Shooting and paint data imports are available within their selected graph.")
     ratings = load_ncaab_adjusted_ratings(season)
     if ratings.empty:
         st.warning(f"No verified adjusted ratings for season {season}. Schedule data still works; ratings cannot be compared until a valid source is available.")
-        render_ncaab_shooting_paint_charts(season)
+        if chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
+            render_ncaab_shooting_paint_charts(season, chart_choice)
     else:
         source_name = str(ratings["Source"].iloc[0]) if "Source" in ratings else "Unknown source"
         as_of = str(ratings["AsOf"].iloc[0]) if "AsOf" in ratings else "Unknown snapshot date"
         st.success(f"Loaded {len(ratings)} adjusted team ratings • {source_name} • snapshot {as_of}")
-        render_ncaab_pace_net_chart(ratings, season)
-        render_ncaab_volatility_chart(ratings, season, date_value)
-        render_ncaab_shooting_paint_charts(season)
+        if chart_choice == "Pace vs Net Rating":
+            render_ncaab_pace_net_chart(ratings, season)
+        elif chart_choice == "Consistency vs Volatility":
+            render_ncaab_volatility_chart(ratings, season, date_value)
+        elif chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
+            render_ncaab_shooting_paint_charts(season, chart_choice)
         with st.expander("Full adjusted ratings table", expanded=False):
             st.dataframe(ratings, use_container_width=True, hide_index=True)
         if not matches.empty:
