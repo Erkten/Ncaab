@@ -16621,25 +16621,29 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
 # The adjusted snapshot is CURRENT and must never be treated as pregame ratings.
 @st.cache_data(ttl=21600, show_spinner=False)
 def fetch_ncaab_completed_games(start_day: str, end_day: str) -> pd.DataFrame:
-    """Fetch completed NCAA D-I scoreboards in 7-day slices to avoid truncation."""
+    """Fetch completed NCAA D-I games day-by-day; ESPN may reject ranged dates."""
     start = pd.Timestamp(start_day).normalize()
     end = pd.Timestamp(end_day).normalize()
     if end < start:
         return pd.DataFrame()
     rows = []
-    window_start = start
-    while window_start <= end:
-        window_end = min(window_start + pd.Timedelta(days=6), end)
-        period = f"{window_start:%Y%m%d}-{window_end:%Y%m%d}"
+    current_day = start
+    while current_day <= end:
+        # The ESPN v2 scoreboard commonly accepts a single YYYYMMDD date;
+        # YYYYMMDD-YYYYMMDD date ranges can return HTTP 400.
+        period = f"{current_day:%Y%m%d}"
+        limit = 500
         response = requests.get(
             ESPN_NCAAB_SCOREBOARD_URL,
-            params={"dates": period, "groups": 50, "limit": 1000},
+            params={"dates": period, "groups": 50, "limit": limit},
             timeout=35,
         )
         response.raise_for_status()
         events = response.json().get("events", [])
-        if len(events) >= 1000:
-            raise ValueError(f"ESPN returned the maximum 1000 events for {period}; refusing incomplete sample")
+        if not isinstance(events, list):
+            raise ValueError(f"Unexpected ESPN events payload for {period}")
+        if len(events) >= limit:
+            raise ValueError(f"ESPN returned {limit} events for {period}; refusing potentially incomplete sample")
         for event in events:
             competition = (event.get("competitions") or [{}])[0]
             status = (event.get("status") or {}).get("type") or {}
@@ -16666,7 +16670,7 @@ def fetch_ncaab_completed_games(start_day: str, end_day: str) -> pd.DataFrame:
                 "away_pts": away_pts,
                 "neutral_site": bool(competition.get("neutralSite", False)),
             })
-        window_start = window_end + pd.Timedelta(days=1)
+        current_day += pd.Timedelta(days=1)
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows).drop_duplicates(subset=["game_id"], keep="last")
