@@ -16512,10 +16512,10 @@ def ncaab_category_regions(fig, data, x_key, y_key, mode):
         ]
     elif mode == "threes":
         cells = [
-            (x0,xmid,y0,ymid,"Low Reliance / Outscored","rgba(148,163,184,.07)"),
-            (xmid,x1,y0,ymid,"Low Reliance / 3P Edge","rgba(34,197,94,.08)"),
-            (x0,xmid,ymid,y1,"3P Reliant / Outscored","rgba(239,68,68,.09)"),
-            (xmid,x1,ymid,y1,"3P Reliant / 3P Edge","rgba(45,212,191,.08)"),
+            (x0,xmid,y0,ymid,"Low 3P Share / Negative Edge","rgba(148,163,184,.07)"),
+            (xmid,x1,y0,ymid,"Low 3P Share / Positive Edge","rgba(34,197,94,.08)"),
+            (x0,xmid,ymid,y1,"High 3P Share / Negative Edge","rgba(239,68,68,.09)"),
+            (xmid,x1,ymid,y1,"High 3P Share / Positive Edge","rgba(45,212,191,.08)"),
         ]
     elif mode == "paint":
         cells = [
