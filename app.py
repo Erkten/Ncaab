@@ -17407,93 +17407,114 @@ def render_ncaab_shooting_paint_charts(season: int, selected_chart="3PA Rate vs 
 
 def render_ncaab_workspace(date_value) -> None:
     st.session_state["ncaab_selected_date"] = str(date_value)
-    st.title("🏀 NCAAB Research Board")
-    st.caption("Men's NCAA Division I • Game times in Sweden • Adjusted ratings kept separate from OG/ATS calculations")
+    st.title("🏀 College Basketball")
+    st.caption("NCAA Division I · Adjusted team ratings · Separate OG and ATS research")
+    workspace_section = st.radio(
+        "Workspace",
+        ["🏠 Games", "📈 Charts", "⚔️ Matchups", "🧮 Predictions"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="ncaab_workspace_section",
+    )
+    season = ncaab_season_for_date(date_value)
     try:
         payload = fetch_ncaab_scoreboard(str(date_value))
         matches = ncaab_match_rows(payload)
     except (requests.RequestException, ValueError, KeyError) as exc:
         st.error(f"Could not fetch ESPN NCAAB fixtures: {exc}")
         matches = pd.DataFrame()
-    if matches.empty:
-        st.info("No games were returned for the selected US scoreboard date. Try the day before/after for overnight games.")
-    else:
-        st.metric("Games on selected scoreboard date", len(matches))
-        st.dataframe(matches.drop(columns=["Event ID", "Away location", "Home location"]), use_container_width=True, hide_index=True)
-    st.subheader("Opponent-adjusted team ratings")
-    season = ncaab_season_for_date(date_value)
-    st.caption(f"Season {season - 1}–{str(season)[-2:]} • AdjO/AdjD = points per 100 possessions; AdjT = adjusted possessions per 40 minutes.")
-    c_refresh, c_source = st.columns([1, 3])
-    with c_refresh:
-        force_refresh = st.button("↻ Refresh adjusted ratings", key="ncaab_torvik_refresh")
-    with c_source:
-        st.caption(f"Source: Bart Torvik team results CSV • automatic refresh after {NCAAB_RATINGS_MAX_AGE_HOURS} hours • no simulated values")
-    # Auto-refresh only if the cached snapshot is missing, stale or from a different season.
-    # Cache failed attempts for an hour to avoid repeatedly requesting an unavailable endpoint.
-    failure_key = f"ncaab_ratings_failed_{season}"
-    can_retry = (pd.Timestamp.now().timestamp() - st.session_state.get(failure_key, 0)) >= 3600
-    if force_refresh:
-        st.session_state.pop(failure_key, None)
-        fetch_ncaab_torvik_ratings.clear()
-    if force_refresh or (ncaab_ratings_stale(season) and can_retry):
-        with st.spinner("Fetching Bart Torvik adjusted ratings..."):
-            ratings_ok, ratings_msg = refresh_ncaab_ratings(season, force=force_refresh)
-        if ratings_ok:
+    ratings = load_ncaab_adjusted_ratings(season)
+    with st.expander("⚙️ Data sources & refresh (advanced)", expanded=False):
+        st.caption(f"Season {season - 1}–{str(season)[-2:]} · AdjO/AdjD in points per 100 possessions · AdjT adjusted pace")
+        c_refresh, c_source = st.columns([1, 3])
+        with c_refresh:
+            force_refresh = st.button("↻ Refresh adjusted ratings", key="ncaab_torvik_refresh")
+        with c_source:
+            st.caption(f"Source: Bart Torvik team results CSV • automatic refresh after {NCAAB_RATINGS_MAX_AGE_HOURS} hours • no simulated values")
+        # Auto-refresh only if the cached snapshot is missing, stale or from a different season.
+        # Cache failed attempts for an hour to avoid repeatedly requesting an unavailable endpoint.
+        failure_key = f"ncaab_ratings_failed_{season}"
+        can_retry = (pd.Timestamp.now().timestamp() - st.session_state.get(failure_key, 0)) >= 3600
+        if force_refresh:
             st.session_state.pop(failure_key, None)
-            st.success(ratings_msg)
-        else:
-            st.session_state[failure_key] = pd.Timestamp.now().timestamp()
-            st.warning(ratings_msg + " You can try again or import a CSV.")
-    with st.expander("Import adjusted ratings CSV (fallback)", expanded=False):
-        st.markdown("Import a CSV with **Team, AdjO, AdjD, AdjT** columns. Optional: **Source, AsOf**. The app saves the imported snapshot locally. Ratings are not automatically fetched from Bart Torvik.")
-        uploaded = st.file_uploader("Ratings CSV", type=["csv"], key="ncaab_ratings_upload")
-        if uploaded is not None:
-            try:
-                ratings_input = pd.read_csv(uploaded)
-                required = {"Team", "AdjO", "AdjD", "AdjT"}
-                if not required.issubset(ratings_input.columns):
-                    st.error("Missing required columns: " + ", ".join(sorted(required - set(ratings_input.columns))))
-                elif st.button("Save NCAAB ratings snapshot", type="primary"):
-                    for column in ("AdjO", "AdjD", "AdjT"):
-                        ratings_input[column] = pd.to_numeric(ratings_input[column], errors="coerce")
-                    ratings_input = ratings_input.dropna(subset=["Team", "AdjO", "AdjD", "AdjT"])
-                    ratings_input["Season"] = season
-                    ratings_input["Source"] = ratings_input.get("Source", "Manual CSV import")
-                    ratings_input["AsOf"] = ratings_input.get("AsOf", pd.Timestamp.now(tz="UTC").isoformat())
-                    NCAAB_RATINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-                    ratings_input.to_csv(NCAAB_RATINGS_PATH, index=False)
-                    st.success(f"Saved {len(ratings_input)} teams to {NCAAB_RATINGS_PATH.name}.")
-            except (ValueError, pd.errors.ParserError) as exc:
-                st.error(f"Unable to parse CSV: {exc}")
-    st.subheader("Analysis charts")
-    chart_choice = st.selectbox("Choose graph", [
-        "None – hide graphs",
-        "Pace vs Net Rating",
-        "Consistency vs Volatility",
-        "3PA Rate vs 3P%",
-        "3P Differential",
-        "Points in the Paint",
-    ], key="ncaab_chart_choice")
-    st.caption("Only the selected graph is expanded. Shooting and paint data imports are available within their selected graph.")
+            fetch_ncaab_torvik_ratings.clear()
+        if force_refresh or (ncaab_ratings_stale(season) and can_retry):
+            with st.spinner("Fetching Bart Torvik adjusted ratings..."):
+                ratings_ok, ratings_msg = refresh_ncaab_ratings(season, force=force_refresh)
+            if ratings_ok:
+                st.session_state.pop(failure_key, None)
+                st.success(ratings_msg)
+            else:
+                st.session_state[failure_key] = pd.Timestamp.now().timestamp()
+                st.warning(ratings_msg + " You can try again or import a CSV.")
+        with st.expander("Import adjusted ratings CSV (fallback)", expanded=False):
+            st.markdown("Import a CSV with **Team, AdjO, AdjD, AdjT** columns. Optional: **Source, AsOf**. The app saves the imported snapshot locally. Ratings are not automatically fetched from Bart Torvik.")
+            uploaded = st.file_uploader("Ratings CSV", type=["csv"], key="ncaab_ratings_upload")
+            if uploaded is not None:
+                try:
+                    ratings_input = pd.read_csv(uploaded)
+                    required = {"Team", "AdjO", "AdjD", "AdjT"}
+                    if not required.issubset(ratings_input.columns):
+                        st.error("Missing required columns: " + ", ".join(sorted(required - set(ratings_input.columns))))
+                    elif st.button("Save NCAAB ratings snapshot", type="primary"):
+                        for column in ("AdjO", "AdjD", "AdjT"):
+                            ratings_input[column] = pd.to_numeric(ratings_input[column], errors="coerce")
+                        ratings_input = ratings_input.dropna(subset=["Team", "AdjO", "AdjD", "AdjT"])
+                        ratings_input["Season"] = season
+                        ratings_input["Source"] = ratings_input.get("Source", "Manual CSV import")
+                        ratings_input["AsOf"] = ratings_input.get("AsOf", pd.Timestamp.now(tz="UTC").isoformat())
+                        NCAAB_RATINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                        ratings_input.to_csv(NCAAB_RATINGS_PATH, index=False)
+                        st.success(f"Saved {len(ratings_input)} teams to {NCAAB_RATINGS_PATH.name}.")
+                except (ValueError, pd.errors.ParserError) as exc:
+                    st.error(f"Unable to parse CSV: {exc}")
+
+    # Re-read after a manual import/refresh; show a compact status everywhere.
     ratings = load_ncaab_adjusted_ratings(season)
     if ratings.empty:
-        st.warning(f"No verified adjusted ratings for season {season}. Schedule data still works; ratings cannot be compared until a valid source is available.")
-        if chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
-            render_ncaab_shooting_paint_charts(season, chart_choice)
+        st.warning("Adjusted ratings unavailable. Schedule is still accessible.")
     else:
-        source_name = str(ratings["Source"].iloc[0]) if "Source" in ratings else "Unknown source"
-        as_of = str(ratings["AsOf"].iloc[0]) if "AsOf" in ratings else "Unknown snapshot date"
-        st.success(f"Loaded {len(ratings)} adjusted team ratings • {source_name} • snapshot {as_of}")
-        if chart_choice == "Pace vs Net Rating":
+        source_name = str(ratings["Source"].iloc[0]) if "Source" in ratings else "Unknown"
+        st.caption(f"✓ {len(ratings)} teams loaded · {source_name} · Season {season-1}/{str(season)[-2:]}")
+
+    if workspace_section == "🏠 Games":
+        st.subheader("Today's games")
+        if matches.empty:
+            st.info("No fixtures found for the selected scoreboard date. Try another date.")
+        else:
+            st.metric("Games", len(matches))
+            st.dataframe(matches.drop(columns=["Event ID", "Away location", "Home location"]),
+                         use_container_width=True, hide_index=True)
+        st.caption("Use Charts for profiles, Matchups to compare teams, or Predictions for independent model previews.")
+
+    elif workspace_section == "📈 Charts":
+        st.subheader("Explore team profiles")
+        chart_choice = st.selectbox("Analysis", [
+            "Pace vs Net Rating",
+            "Consistency vs Volatility",
+            "3PA Rate vs 3P%",
+            "3P Differential",
+            "Points in the Paint",
+        ], key="ncaab_chart_choice")
+        if ratings.empty and chart_choice in ("Pace vs Net Rating", "Consistency vs Volatility"):
+            st.info("Load adjusted ratings in Data sources above to view this chart.")
+        elif chart_choice == "Pace vs Net Rating":
             render_ncaab_pace_net_chart(ratings, season)
         elif chart_choice == "Consistency vs Volatility":
             render_ncaab_volatility_chart(ratings, season, date_value)
-        elif chart_choice in ("3PA Rate vs 3P%", "3P Differential", "Points in the Paint"):
+        else:
             render_ncaab_shooting_paint_charts(season, chart_choice)
-        with st.expander("Full adjusted ratings table", expanded=False):
-            st.dataframe(ratings, use_container_width=True, hide_index=True)
-        if not matches.empty:
-            st.subheader("Selected matchup • adjusted profile")
+        if not ratings.empty:
+            with st.expander("Full adjusted ratings table", expanded=False):
+                st.dataframe(ratings, use_container_width=True, hide_index=True)
+
+    elif workspace_section == "⚔️ Matchups":
+        st.subheader("Compare a matchup")
+        if ratings.empty:
+            st.info("Load adjusted ratings from Data sources to compare teams.")
+        elif matches.empty:
+            st.info("No matchups available for this date.")
+        else:
             choices = [f"{row['Away']} @ {row['Home']} ({row['Start (Sweden)']})" for _, row in matches.iterrows()]
             selected = st.selectbox("Match", list(range(len(choices))), format_func=lambda i: choices[i])
             match = matches.iloc[selected]
@@ -17508,8 +17529,10 @@ def render_ncaab_workspace(date_value) -> None:
                     c1.metric(f"{team} AdjO", f"{entry['AdjO']:.1f}")
                     c2.metric(f"{team} AdjD", f"{entry['AdjD']:.1f}")
                     c3.metric(f"{team} AdjT", f"{entry['AdjT']:.1f}")
-    st.divider()
-    render_ncaab_projections(matches, ratings, season)
+
+    else:
+        st.subheader("Game predictions")
+        render_ncaab_projections(matches, ratings, season)
 
 
 if sport_mode == "NCAAB":
