@@ -17199,6 +17199,33 @@ def ncaab_espn_shooting_summary(boxes, season):
     return clean_ncaab_tr_per_game(pd.DataFrame(rows), season).assign(Source="ESPN completed-game boxscores (automatic)")
 
 
+NCAAB_ESPN_SYNC_MARKER = APP_DIR / "data" / "ncaab_espn_last_sync.txt"
+NCAAB_ESPN_AUTO_SYNC_HOURS = 6
+
+
+def ncaab_espn_auto_sync_due(season):
+    """Only auto-fetch current-season data periodically, not on every Streamlit rerun."""
+    now = pd.Timestamp.now(tz="Europe/Stockholm")
+    if season != ncaab_season_for_date(now.date()):
+        return False
+    try:
+        timestamp = pd.Timestamp(NCAAB_ESPN_SYNC_MARKER.read_text(encoding="utf-8").strip())
+        if timestamp.tzinfo is None:
+            return True
+        return (now - timestamp).total_seconds() >= NCAAB_ESPN_AUTO_SYNC_HOURS * 3600
+    except (OSError, ValueError, TypeError):
+        return True
+
+
+def ncaab_espn_mark_sync_attempt():
+    """Throttle automatic attempts even when ESPN has no completed games yet."""
+    try:
+        NCAAB_ESPN_SYNC_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        NCAAB_ESPN_SYNC_MARKER.write_text(pd.Timestamp.now(tz="Europe/Stockholm").isoformat(), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def render_ncaab_espn_shooting(season):
     st.subheader("ESPN • automatically collected shooting statistics")
     st.caption("Pulls completed-game boxscores, not TeamRankings pages. Independent exploratory charts only; does not change OG or ATS.")
@@ -17207,11 +17234,16 @@ def render_ncaab_espn_shooting(season):
         days = st.selectbox("History window (days)", [7, 14, 30], index=0, key="ncaab_espn_shooting_days")
     with b:
         fetch = st.button("↻ Sync ESPN games", key="ncaab_espn_shooting_sync")
+        auto_enabled = st.checkbox("Auto-sync every 6 hours", value=True, key="ncaab_espn_auto_sync")
     with c:
-        st.caption("Saved results remain available between app launches. First sync may take longer; each run is limited to 250 new games.")
-    if fetch:
+        st.caption("ESPN boxscores are cached locally. Auto-sync checks the latest 14 days and only runs when due; manual sync uses the selected history window.")
+    auto_fetch = auto_enabled and ncaab_espn_auto_sync_due(season)
+    if fetch or auto_fetch:
+        if auto_fetch:
+            ncaab_espn_mark_sync_attempt()
+        sync_days = days if fetch else 14
         cutoff = min(pd.Timestamp.now(tz="Europe/Stockholm").tz_localize(None).normalize(), pd.Timestamp(st.session_state.get("ncaab_selected_date", pd.Timestamp.today())).normalize())
-        start = max(pd.Timestamp(season - 1, 11, 1), cutoff - pd.Timedelta(days=days - 1))
+        start = max(pd.Timestamp(season - 1, 11, 1), cutoff - pd.Timedelta(days=sync_days - 1))
         try:
             with st.spinner("Fetching completed games and ESPN box scores..."):
                 games = fetch_ncaab_completed_games(str(start.date()), str(cutoff.date()))
@@ -17220,11 +17252,13 @@ def render_ncaab_espn_shooting(season):
                 else:
                     added, skipped, errors = update_ncaab_espn_boxes(season, games)
                     st.success(f"Stored {added} new games. {errors} missing/failed boxscores. {skipped} beyond sync limit.")
+                    if fetch:
+                        ncaab_espn_mark_sync_attempt()
         except (requests.RequestException, ValueError, KeyError, OSError) as exc:
             st.error(f"ESPN sync failed: {exc}")
     boxes = load_ncaab_espn_boxes(season)
     if boxes.empty:
-        st.info("No cached ESPN games yet. Click 'Sync ESPN games' to load verified completed games.")
+        st.info("No cached ESPN games yet. Automatic sync checks periodically, or click 'Sync ESPN games' to retry.")
         return
     # Filter to complete two-team game pairs; the dataframe is historical
     # and never presented as a full-season rating when collection is partial.
