@@ -16466,6 +16466,75 @@ def render_ncaab_projections(matches: pd.DataFrame, ratings: pd.DataFrame, seaso
             st.success("Final results updated for games loaded on the selected scoreboard date.")
 
 
+
+def ncaab_category_regions(fig, data, x_key, y_key, mode):
+    """Descriptive chart zones, derived solely from the displayed sample."""
+    x = pd.to_numeric(data[x_key], errors="coerce").dropna()
+    y = pd.to_numeric(data[y_key], errors="coerce").dropna()
+    if len(x) < 2 or len(y) < 2:
+        return ""
+    def bounds(values):
+        lo, hi = float(values.min()), float(values.max())
+        pad = max((hi - lo) * .08, .02)
+        return lo - pad, hi + pad
+    x0, x1 = bounds(x)
+    y0, y1 = bounds(y)
+    if mode == "net":
+        cuts = [float(y.quantile(q)) for q in (.2, .4, .6, .8)]
+        edges = [y0] + cuts + [y1]
+        names = ["Below Average", "Developing", "Average", "Great", "Elite"]
+        colors = ["rgba(239,68,68,.085)", "rgba(249,115,22,.07)",
+                  "rgba(148,163,184,.06)", "rgba(34,197,94,.065)", "rgba(45,212,191,.10)"]
+        for i, name in enumerate(names):
+            if edges[i+1] <= edges[i]:
+                continue
+            fig.add_hrect(y0=edges[i], y1=edges[i+1], fillcolor=colors[i], line_width=0, layer="below")
+            fig.add_annotation(x=.99, y=(edges[i]+edges[i+1])/2, xref="paper", yref="y",
+                               text=name, showarrow=False, xanchor="right",
+                               font=dict(color="#cbd5e1", size=11),
+                               bgcolor="rgba(7,13,24,.58)")
+        return "Net-rating categories are sample quintiles (20% each), not fixed NCAA benchmarks."
+    xmid, ymid = float(x.median()), float(y.median())
+    # Quadrants are descriptive; dependence and volatility are not quality scores.
+    if mode == "volatility":
+        cells = [
+            (x0,xmid,y0,ymid,"Consistent / Lower Rated","rgba(148,163,184,.075)"),
+            (xmid,x1,y0,ymid,"Consistently Strong","rgba(34,197,94,.09)"),
+            (x0,xmid,ymid,y1,"Volatile / Lower Rated","rgba(249,115,22,.09)"),
+            (xmid,x1,ymid,y1,"Strong but Volatile","rgba(239,68,68,.08)"),
+        ]
+    elif mode == "shooting":
+        cells = [
+            (x0,xmid,y0,ymid,"Low Volume / Low Accuracy","rgba(239,68,68,.08)"),
+            (xmid,x1,y0,ymid,"High Volume / Low Accuracy","rgba(249,115,22,.10)"),
+            (x0,xmid,ymid,y1,"Selective & Accurate","rgba(34,197,94,.08)"),
+            (xmid,x1,ymid,y1,"High Volume & Accurate","rgba(45,212,191,.09)"),
+        ]
+    elif mode == "threes":
+        cells = [
+            (x0,xmid,y0,ymid,"Low Reliance / Outscored","rgba(148,163,184,.07)"),
+            (xmid,x1,y0,ymid,"Low Reliance / 3P Edge","rgba(34,197,94,.08)"),
+            (x0,xmid,ymid,y1,"3P Reliant / Outscored","rgba(239,68,68,.09)"),
+            (xmid,x1,ymid,y1,"3P Reliant / 3P Edge","rgba(45,212,191,.08)"),
+        ]
+    elif mode == "paint":
+        cells = [
+            (x0,xmid,y0,ymid,"Low Paint Production","rgba(239,68,68,.075)"),
+            (xmid,x1,y0,ymid,"Productive / Mixed Scoring","rgba(34,197,94,.08)"),
+            (x0,xmid,ymid,y1,"Paint Reliant / Low Output","rgba(249,115,22,.09)"),
+            (xmid,x1,ymid,y1,"Paint-Focused & Productive","rgba(45,212,191,.09)"),
+        ]
+    else:
+        return ""
+    for xa, xb, ya, yb, label, color in cells:
+        fig.add_shape(type="rect", x0=xa, x1=xb, y0=ya, y1=yb,
+                      xref="x", yref="y", fillcolor=color, line_width=0, layer="below")
+        fig.add_annotation(x=(xa+xb)/2, y=(ya+yb)/2, xref="x", yref="y",
+                           text=label, showarrow=False, font=dict(size=10,color="#cbd5e1"),
+                           bgcolor="rgba(7,13,24,.66)")
+    return "Areas are defined by the displayed sample medians, not fixed NCAA-wide ratings or betting recommendations."
+
+
 def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
     """Interactive team-level adjusted tempo vs adjusted net rating."""
     st.subheader("Pace vs Net Rating • opponent-adjusted")
@@ -16487,7 +16556,7 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
     with c2:
         label_mode = st.selectbox("Team labels", ["Highlighted only", "Top net rating", "All teams", "None"], key="ncaab_pace_labels")
     with c3:
-        elite_zone = st.checkbox("Show elite rating zone", value=True, key="ncaab_pace_elite")
+        elite_zone = st.checkbox("Show category regions", value=True, key="ncaab_pace_elite")
 
     pace_mid = float(chart_data["AdjT"].median())
     net_mid = float(chart_data["Net Rating"].median())
@@ -16500,14 +16569,9 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
 
     fig = go.Figure()
     if elite_zone:
-        # Clearly declared statistical threshold; not an attempt to reproduce
-        # a proprietary classification from the reference screenshot.
-        elite_cutoff = float(chart_data["Net Rating"].quantile(0.75))
-        fig.add_hrect(y0=elite_cutoff, y1=y_high, fillcolor="rgba(239,68,68,0.075)",
-                      line_width=0, layer="below")
-        fig.add_hline(y=elite_cutoff, line_color="rgba(248,113,113,0.65)",
-                      line_dash="dash", line_width=1,
-                      annotation_text="Top 25% net rating", annotation_position="top left")
+        zone_note = ncaab_category_regions(fig, chart_data, "AdjT", "Net Rating", "net")
+    else:
+        zone_note = "Category shading hidden."
 
     fig.add_vline(x=pace_mid, line_color="rgba(148,163,184,0.6)", line_width=1)
     fig.add_hline(y=net_mid, line_color="rgba(148,163,184,0.6)", line_width=1)
@@ -16549,7 +16613,7 @@ def render_ncaab_pace_net_chart(ratings: pd.DataFrame, season: int) -> None:
         paper_bgcolor="#070d18", plot_bgcolor="#0b1220",
     )
     st.plotly_chart(fig, use_container_width=True, key="ncaab_pace_net_chart")
-    st.caption(f"Reference lines show the current snapshot medians: AdjT {pace_mid:.1f}, net rating {net_mid:+.1f}. The elite region, if shown, means top quartile of net rating only — not a betting recommendation.")
+    st.caption(f"Reference lines: AdjT median {pace_mid:.1f}, net median {net_mid:+.1f}. {zone_note}")
 
 
 
@@ -16719,6 +16783,7 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
     cutoff_strength = float(enough["Adj Net"].quantile(0.75))
     cutoff_vol = float(enough["Volatility"].median())
     fig = go.Figure()
+    zone_note = ncaab_category_regions(fig, enough, "Adj Net", "Volatility", "volatility")
     def plot_points(df, highlighted):
         if df.empty:
             return
@@ -16741,18 +16806,6 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
     plot_points(enough[enough["Team"].isin(selected)], True)
     fig.add_vline(x=cutoff_strength, line_dash="dash", line_color="rgba(148,163,184,0.6)")
     fig.add_hline(y=cutoff_vol, line_dash="dash", line_color="rgba(148,163,184,0.6)")
-    # Profile labels describe the relative position in this specific sample.
-    # Neither these thresholds nor our residual-SD measure are EvanMiya ratings.
-    for x, y, label in (
-        (0.03, 0.98, "Volatile / lower rating"),
-        (0.97, 0.98, "Dangerous but volatile"),
-        (0.03, 0.05, "Lower rating / consistent"),
-        (0.97, 0.05, "Consistently excellent"),
-    ):
-        fig.add_annotation(x=x, y=y, xref="paper", yref="paper", text=label,
-                           showarrow=False, xanchor="left" if x < 0.5 else "right",
-                           font=dict(size=11, color="#94a3b8"),
-                           bgcolor="rgba(15,23,42,0.65)")
     fig.update_layout(
         template="plotly_dark", height=630, margin=dict(l=20, r=20, t=45, b=25),
         title=dict(text=f"{season-1}–{str(season)[-2:]} • {start:%b %d} to {cutoff:%b %d} • {len(enough)} teams", font=dict(size=16)),
@@ -16761,7 +16814,7 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
         paper_bgcolor="#070d18", plot_bgcolor="#0b1220",
     )
     st.plotly_chart(fig, use_container_width=True, key="ncaab_volatility_chart")
-    st.caption(f"Guides: top quartile Adj Net = {cutoff_strength:+.1f}; median residual SD = {cutoff_vol:.1f}. These are data-driven guides, NOT EvanMiya thresholds or verified betting signals.")
+    st.caption(f"Guides: Adj Net and volatility medians define the four quadrants. {zone_note} This is not EvanMiya\u2019s proprietary score.")
     with st.expander("Method, limitations & team-by-team game deviations", expanded=False):
         st.markdown(
             "**Method:** For each completed game, observed margin × 100 / average current AdjT "
@@ -16846,6 +16899,10 @@ def render_ncaab_style_scatter(
         return
     fig = go.Figure()
     mid_x, mid_y = float(subset[x_key].median()), float(subset[y_key].median())
+    mode = ("shooting" if x_key == "3PA Rate" else
+            "threes" if "3P Made Differential" in x_key else
+            "paint" if "Paint" in x_key else "")
+    zone_note = ncaab_category_regions(fig, subset, x_key, y_key, mode)
     fig.add_vline(x=mid_x, line=dict(color="rgba(148,163,184,0.55)", dash="dash", width=1))
     fig.add_hline(y=mid_y, line=dict(color="rgba(148,163,184,0.55)", dash="dash", width=1))
     for selected, group_label, color, size in [
@@ -16876,7 +16933,7 @@ def render_ncaab_style_scatter(
         legend=dict(orientation="h", y=1.06, x=0),
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption(f"Dashed lines indicate medians for the {len(subset)} imported teams, not NCAA-wide benchmarks.")
+    st.caption(f"Dashed lines indicate medians for the {len(subset)} displayed teams. {zone_note}")
 
 
 # TeamRankings publishes per-game shooting stats on team-stat pages. Its terms
