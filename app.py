@@ -16269,7 +16269,13 @@ def refresh_ncaab_ratings(season: int, force: bool = False) -> tuple[bool, str]:
 
 
 def ncaab_team_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value).lower().replace("&", "and"))
+    # ESPN commonly spells out "State" while Torvik abbreviates it to "St.".
+    # Normalize whole words before stripping punctuation; never use fuzzy
+    # matching because similarly named Division I teams must stay distinct.
+    normalized = str(value).lower().replace("&", "and")
+    normalized = re.sub(r"\bstate\b", "st", normalized)
+    normalized = re.sub(r"\bsaint\b", "st", normalized)
+    return re.sub(r"[^a-z0-9]", "", normalized)
 
 
 NCAAB_TEAM_ALIASES = {
@@ -16281,14 +16287,30 @@ NCAAB_TEAM_ALIASES = {
     "saintmarys": "stmarys",
     "saintjohns": "stjohns",
     "saintjosephs": "stjosephs",
+    "appst": "appalachianst",
+    "ualbany": "albany",
+    "americanuniversity": "american",
+    "floridainternational": "fiu",
+    "iuindianapolis": "iuindy",
+    "uic": "illinoischicago",
+    "longislanduniversity": "liu",
+    "loyolamaryland": "loyolamd",
+    "omaha": "nebraskaomaha",
+    "queensuniversity": "queens",
+    "ulmonroe": "louisianamonroe",
+    "utmartin": "tennesseemartin",
 }
+
+
+def canonical_ncaab_team_key(value: str) -> str:
+    key = ncaab_team_key(value)
+    return NCAAB_TEAM_ALIASES.get(key, key)
 
 
 def find_ncaab_rating(ratings: pd.DataFrame, team: str, location: str = "") -> pd.DataFrame:
     lookup = ratings.copy()
-    lookup["_key"] = lookup["Team"].map(ncaab_team_key)
-    candidates = [ncaab_team_key(location), ncaab_team_key(team)]
-    candidates.extend(NCAAB_TEAM_ALIASES.get(key, key) for key in list(candidates))
+    lookup["_key"] = lookup["Team"].map(canonical_ncaab_team_key)
+    candidates = [canonical_ncaab_team_key(location), canonical_ncaab_team_key(team)]
     for candidate in dict.fromkeys(candidates):
         matches = lookup[lookup["_key"] == candidate]
         if len(matches) == 1:
@@ -16719,11 +16741,10 @@ def ncaab_volatility_results(games: pd.DataFrame, ratings: pd.DataFrame) -> tupl
     # strict lookup used elsewhere. Do not fuzzy-assign ambiguous team names.
     lookup = {}
     for _, rating in current.iterrows():
-        key = ncaab_team_key(rating["Team"])
+        key = canonical_ncaab_team_key(rating["Team"])
         lookup.setdefault(key, []).append(rating)
     def find(team, location):
-        candidates = [ncaab_team_key(location), ncaab_team_key(team)]
-        candidates += [NCAAB_TEAM_ALIASES.get(k, k) for k in candidates]
+        candidates = [canonical_ncaab_team_key(location), canonical_ncaab_team_key(team)]
         for key in dict.fromkeys(candidates):
             found = lookup.get(key, [])
             if len(found) == 1:
@@ -16776,7 +16797,7 @@ def render_ncaab_volatility_chart(ratings: pd.DataFrame, season: int, date_value
     with controls[0]:
         window_days = st.selectbox("History window", [14, 30, 60], index=1, key="ncaab_vol_window")
     with controls[1]:
-        min_games = st.selectbox("Minimum games", [3, 5, 8], index=1, key="ncaab_vol_games")
+        min_games = st.selectbox("Minimum games", [2, 3, 5, 8], index=1, key="ncaab_vol_games")
     with controls[2]:
         reload_history = st.button("↻ Refresh completed games", key="ncaab_vol_refresh")
     if reload_history:
