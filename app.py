@@ -15816,13 +15816,19 @@ def default_slate_date() -> Any:
     return now.date()
 
 
+def select_today_in_stockholm() -> None:
+    """Reset the shared date picker to today's Swedish calendar date."""
+    st.session_state["dashboard_selected_date"] = pd.Timestamp.now(tz="Europe/Stockholm").date()
+
+
 with st.sidebar:
     st.subheader("Setup")
     sport_mode = st.radio("Sport", ["MLB", "NCAAF", "NFL", "NCAAB"], index=0)
-    selected_date = st.date_input("Date", value=default_slate_date())
+    selected_date = st.date_input("Date", value=default_slate_date(), key="dashboard_selected_date")
 
     if sport_mode == "NCAAB":
         st.caption("College Basketball • ESPN schedule + optional adjusted ratings")
+        st.button("Today (Sweden)", on_click=select_today_in_stockholm, use_container_width=True)
     elif sport_mode in {"NCAAF", "NFL"}:
         football_label = sport_mode
         football_is_nfl = sport_mode == "NFL"
@@ -16119,14 +16125,37 @@ NCAAB_RATINGS_MAX_AGE_HOURS = 12
 
 
 @st.cache_data(ttl=600)
-def fetch_ncaab_scoreboard(date_str: str) -> dict:
+def fetch_ncaab_scoreboard_day(date_code: str) -> dict:
     response = requests.get(
         ESPN_NCAAB_SCOREBOARD_URL,
-        params={"dates": date_str.replace("-", ""), "groups": 50, "limit": 500},
+        params={"dates": date_code, "groups": 50, "limit": 500},
         timeout=25,
     )
     response.raise_for_status()
     return response.json()
+
+
+def fetch_ncaab_scoreboard(date_str: str) -> dict:
+    """Return events played on the selected Swedish calendar date.
+
+    ESPN groups games by its US scoreboard date, while this dashboard displays
+    Europe/Stockholm times. Fetching the adjacent dates prevents late US games
+    from disappearing from the user's selected Swedish day.
+    """
+    selected_day = pd.Timestamp(date_str).normalize()
+    events_by_id = {}
+    for offset in (-1, 0, 1):
+        date_code = (selected_day + pd.Timedelta(days=offset)).strftime("%Y%m%d")
+        payload = fetch_ncaab_scoreboard_day(date_code)
+        for event in payload.get("events", []) or []:
+            event_id = str(event.get("id", ""))
+            event_start = pd.to_datetime(event.get("date"), utc=True, errors="coerce")
+            if pd.isna(event_start):
+                continue
+            local_day = event_start.tz_convert("Europe/Stockholm").tz_localize(None).normalize()
+            if local_day == selected_day:
+                events_by_id[event_id or f"event-{len(events_by_id)}"] = event
+    return {"events": list(events_by_id.values())}
 
 
 def ncaab_match_rows(payload: dict) -> pd.DataFrame:
@@ -17478,9 +17507,10 @@ def render_ncaab_workspace(date_value) -> None:
         st.caption(f"✓ {len(ratings)} teams loaded · {source_name} · Season {season-1}/{str(season)[-2:]}")
 
     if workspace_section == "🏠 Games":
-        st.subheader("Today's games")
+        selected_day_label = pd.Timestamp(date_value).strftime("%A, %d %B %Y")
+        st.subheader(f"Games · {selected_day_label}")
         if matches.empty:
-            st.info("No fixtures found for the selected scoreboard date. Try another date.")
+            st.info(f"No NCAA Division I fixtures found for {selected_day_label}. Choose another date in the sidebar.")
         else:
             st.metric("Games", len(matches))
             st.dataframe(matches.drop(columns=["Event ID", "Away location", "Home location"]),
